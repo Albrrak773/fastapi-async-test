@@ -4,12 +4,12 @@
 set -euo pipefail
 
 # Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-CYAN='\033[0;36m'
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[34m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
@@ -27,7 +27,6 @@ HOURGLASS="⏳"
 SPINNER_PID_FILE="${TMPDIR:-/tmp}/.bench_spinner_pid"
 
 status() {
-  # simple status line, emoji not colored, text label colored
   echo -e "${GEAR} ${BLUE}$1${RESET}"
 }
 
@@ -61,6 +60,15 @@ progress_end() {
   echo -e " ${GREEN}${CHECK}${RESET}"
 }
 
+bytes_to_mb() {
+  local bytes="$1"
+  if [[ "$bytes" =~ ^[0-9]+$ ]]; then
+    awk "BEGIN {printf \"%.2f\", $bytes/1024/1024}"
+  else
+    echo "0.00"
+  fi
+}
+
 summary() {
   local script="$1"
   local host="$2"
@@ -79,13 +87,14 @@ summary() {
   local req_write="${15}"
   local resp_wait="${16}"
   local resp_read="${17}"
-  local avg_threads="${18}"
-  local max_threads="${19}"
-  local min_threads="${20}"
+  local threads="${18}"
+  local avg_ram="${19}"
+  local max_ram="${20}"
+  local min_ram="${21}"
 
   echo ""
   echo -e "${BOLD}${CYAN}╔═══════════════════════════════════════════════════════════════╗${RESET}"
-  echo -e "${BOLD}${CYAN}║${RESET}  ${ROCKET}  ${BOLD}${CYAN}BENCHMARK RESULTS${RESET}                                     ${BOLD}${CYAN}║${RESET}"
+  echo -e "${BOLD}${CYAN}║${RESET} ${ROCKET}  ${BOLD}${CYAN}BENCHMARK RESULTS${RESET}                                     ${BOLD}${CYAN}\t║${RESET}"
   echo -e "${BOLD}${CYAN}╚═══════════════════════════════════════════════════════════════╝${RESET}"
   echo ""
 
@@ -105,8 +114,8 @@ summary() {
   echo ""
 
   echo -e "${CHART} ${BOLD}${BLUE}Request Summary${RESET}"
-  echo -e "  ${BOLD}${BLUE}Total data:${RESET}      ${BOLD}$total_data${RESET}"
-  echo -e "  ${BOLD}${BLUE}Size/request:${RESET}    ${BOLD}$size_req${RESET}"
+  echo -e "  ${BOLD}${BLUE}Total data:${RESET}      ${BOLD}${total_data} MB${RESET}"
+  echo -e "  ${BOLD}${BLUE}Size/request:${RESET}    ${BOLD}${size_req} MB${RESET}"
   echo ""
 
   echo -e "${CLOCK} ${BOLD}${YELLOW}Details (average, fastest, slowest)${RESET}"
@@ -118,13 +127,25 @@ summary() {
   echo ""
 
   echo -e "${THREAD} ${BOLD}${MAGENTA}Thread Usage${RESET}"
-  if [[ "$avg_threads" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-    printf "  ${BOLD}${BLUE}Average:${RESET}     ${BOLD}%.1f${RESET}\n" "$avg_threads"
+  echo -e "  ${BOLD}${BLUE}Total Threads Spawned:${RESET} ${BOLD}$threads${RESET}"
+  echo ""
+
+  echo -e "💾 ${BOLD}${MAGENTA}Memory Usage (MB)${RESET}"
+  if [[ "$avg_ram" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    printf "  ${BOLD}${BLUE}Average:${RESET}     ${BOLD}%.2f MB${RESET}\n" "$avg_ram"
   else
-    echo -e "  ${BOLD}${BLUE}Average:${RESET}     ${BOLD}$avg_threads${RESET}"
+    echo -e "  ${BOLD}${BLUE}Average:${RESET}     ${BOLD}$avg_ram${RESET}"
   fi
-  echo -e "  ${BOLD}${BLUE}Min:${RESET}         ${BOLD}$min_threads${RESET}"
-  echo -e "  ${BOLD}${BLUE}Max:${RESET}         ${BOLD}$max_threads${RESET}"
+  if [[ "$min_ram" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    printf "  ${BOLD}${BLUE}Min:${RESET}         ${BOLD}%.2f MB${RESET}\n" "$min_ram"
+  else
+    echo -e "  ${BOLD}${BLUE}Min:${RESET}         ${BOLD}$min_ram${RESET}"
+  fi
+  if [[ "$max_ram" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    printf "  ${BOLD}${BLUE}Max:${RESET}         ${BOLD}%.2f MB${RESET}\n" "$max_ram"
+  else
+    echo -e "  ${BOLD}${BLUE}Max:${RESET}         ${BOLD}$max_ram${RESET}"
+  fi
   echo ""
   echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════════${RESET}"
   echo ""
@@ -138,6 +159,7 @@ case "$CMD" in
   error) error "$@";;
   progress_start) progress_start ;;
   progress_end) progress_end ;;
+  bytes_to_mb) bytes_to_mb "$@";;
   summary) summary "$@";;
   *) echo "Unknown command: $CMD" >&2; exit 1;;
 esac

@@ -13,25 +13,25 @@ show_help() {
   echo -e "${BOLD}${CYAN}FastAPI Benchmark Tool${RESET}"
   echo ""
   echo -e "${BOLD}${YELLOW}USAGE:${RESET}"
-  echo "  $0 <script.py> [OPTIONS]"
+  echo "  $0 <script.py> <endpoint> [OPTIONS]"
   echo ""
   echo -e "${BOLD}${YELLOW}REQUIRED:${RESET}"
   echo "  script.py              Python script to benchmark"
+  echo "  endpoint               API endpoint to test (default: /)"
   echo ""
   echo -e "${BOLD}${YELLOW}OPTIONS:${RESET}"
   echo "  -h, --host HOST        Server host (default: localhost:8000)"
   echo "  -p, --port PORT        Server port"
-  echo "  -e, --endpoint PATH    API endpoint to test (default: /)"
   echo "  -n, --requests NUM     Total number of requests (default: 200)"
   echo "  -c, --concurrency NUM  Number of concurrent requests (default: 50)"
   echo "  --help                 Show this help message"
   echo ""
   echo -e "${BOLD}${YELLOW}EXAMPLES:${RESET}"
-  echo "  $0 script.py localhost:8000"
-  echo "  $0 script.py example.com"
-  echo "  $0 script.py example.com -p 8000"
-  echo "  $0 script.py localhost:8000 -n 1000"
-  echo "  $0 script.py https://localhost:8000"
+  echo "  $0 sync.py /data"
+  echo "  $0 sync.py /words -h localhost:8000"
+  echo "  $0 sync.py / -h example.com"
+  echo "  $0 sync.py /api -h example.com -p 8000"
+  echo "  $0 sync.py /health -n 1000"
   echo ""
 }
 
@@ -43,11 +43,14 @@ fi
 
 # Default values
 SCRIPT_FILE=""
+ENDPOINT=""
 HOST=""
 PORT=""
-ENDPOINT="/"
 REQUESTS="200"
 CONCURRENCY="50"
+
+# Track positional arguments
+POSITIONAL_COUNT=0
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -58,10 +61,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     -p|--port)
       PORT="$2"
-      shift 2
-      ;;
-    -e|--endpoint)
-      ENDPOINT="$2"
       shift 2
       ;;
     -n|--requests)
@@ -78,8 +77,11 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      if [[ -z "$SCRIPT_FILE" ]]; then
+      POSITIONAL_COUNT=$((POSITIONAL_COUNT + 1))
+      if [[ $POSITIONAL_COUNT -eq 1 ]]; then
         SCRIPT_FILE="$1"
+      elif [[ $POSITIONAL_COUNT -eq 2 ]]; then
+        ENDPOINT="$1"
       else
         echo "Error: Unexpected argument: $1" >&2
         echo "Use --help for usage information" >&2
@@ -101,6 +103,11 @@ fi
 if [[ ! -f "$SCRIPT_FILE" ]]; then
   echo "Error: Script file not found: $SCRIPT_FILE" >&2
   exit 1
+fi
+
+# Default endpoint to / if not provided
+if [[ -z "$ENDPOINT" ]]; then
+  ENDPOINT="/"
 fi
 
 # Parse host and port
@@ -162,6 +169,13 @@ fi
 # Normalize endpoint (ensure leading /)
 if [[ ! "$ENDPOINT" =~ ^/ ]]; then
   ENDPOINT="/$ENDPOINT"
+fi
+
+# Validate concurrency vs requests
+if [[ "$CONCURRENCY" -gt "$REQUESTS" ]]; then
+  echo "Error: -n cannot be less than -c" >&2
+  echo "Requests (-n): $REQUESTS, Concurrency (-c): $CONCURRENCY" >&2
+  exit 1
 fi
 
 # Build HOST (without endpoint)

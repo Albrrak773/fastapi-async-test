@@ -3,25 +3,11 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PARSER="$SCRIPT_DIR/parse_args.sh"
-FORMATTER="$SCRIPT_DIR/format.sh"
+PARSER="$(pwd)/parse_args.sh"
+FORMATTER="$(pwd)/format.sh"
 
-# Check for required scripts
-if [[ ! -f "$PARSER" ]]; then
-  echo "Error: parse_args.sh not found in $SCRIPT_DIR" >&2
-  exit 1
-fi
-
-if [[ ! -f "$FORMATTER" ]]; then
-  echo "Error: format.sh not found in $SCRIPT_DIR" >&2
-  exit 1
-fi
-
-# Parse arguments using the parser script
+# get arguments using the parser script
 source "$PARSER" "$@"
-
-# Use parsed values
 SCRIPT_FILE="$BENCH_SCRIPT_FILE"
 HOST="$BENCH_HOST"
 ENDPOINT="$BENCH_ENDPOINT"
@@ -33,6 +19,7 @@ HEY_CONCURRENCY="$BENCH_CONCURRENCY"
 SERVER_LOG=$(mktemp)
 set +e
 uv run "$SCRIPT_FILE" > "$SERVER_LOG" 2>&1 &
+sleep 0.5
 SERVER_PROC=$!
 set -e
 
@@ -74,17 +61,23 @@ done
 sleep 0.3
 "$FORMATTER" status "Server ready"
 
-# Thread monitor
-THREAD_LOG=$(mktemp)
+# Function to extract value from /proc/PID/status
+get_proc_status() {
+  local pid="$1"
+  local key="$2"
+  if [[ -f "/proc/$pid/status" ]]; then
+    grep "^${key}:" "/proc/$pid/status" 2>/dev/null | awk '{print $2}' || echo ""
+  else
+    echo ""
+  fi
+}
+
+# RAM monitor (sample VmRSS only)
+RAM_LOG=$(mktemp)
 {
-  while kill -0 "$SERVER_PROC" 2>/dev/null; do
-    if [[ -d "/proc/$PID/task" ]]; then
-      # Count threads via /proc (fast)
-      wc -l < "/proc/$PID/task" >> "$THREAD_LOG" 2>/dev/null || true
-    else
-      # Fallback ps
-      ps -p "$PID" -L 2>/dev/null | tail -n +2 | wc -l >> "$THREAD_LOG" 2>/dev/null || true
-    fi
+  while kill -0 "$PID" 2>/dev/null; do
+    rss=$(get_proc_status "$PID" "VmRSS")
+    [[ -n "$rss" ]] && echo "$rss" >> "$RAM_LOG"
     sleep 0.5
   done
 } &
@@ -108,7 +101,7 @@ if [[ $HEY_EXIT -ne 0 ]]; then
   kill "$MONITOR_PID" 2>/dev/null || true
   wait "$SERVER_PROC" 2>/dev/null || true
   wait "$MONITOR_PID" 2>/dev/null || true
-  rm -f "$SERVER_LOG" "$HEY_OUTPUT" "$THREAD_LOG"
+  rm -f "$SERVER_LOG" "$HEY_OUTPUT" "$RAM_LOG"
   exit 1
 fi
 
@@ -119,8 +112,10 @@ Fastest=$(grep -E "^  Fastest:" "$HEY_OUTPUT" | sed -E 's/^  Fastest:[[:space:]]
 Average=$(grep -E "^  Average:" "$HEY_OUTPUT" | sed -E 's/^  Average:[[:space:]]+//' || echo "N/A")
 RPS=$(grep -E "^  Requests/sec:" "$HEY_OUTPUT" | awk '{print $2}' || echo "N/A")
 
-TotalData=$(grep -E "^  Total data:" "$HEY_OUTPUT" | sed -E 's/^  Total data:[[:space:]]+//' || echo "0 bytes")
-SizeReq=$(grep -E "^  Size/request:" "$HEY_OUTPUT" | sed -E 's/^  Size\/request:[[:space:]]+//' || echo "0 bytes")
+TotalData_bytes=$(grep -E "^  Total data:" "$HEY_OUTPUT" | awk '{print $3}' || echo "0")
+TotalData=$("$FORMATTER" bytes_to_mb "$TotalData_bytes")
+SizeReq_bytes=$(grep -E "^  Size/request:" "$HEY_OUTPUT" | awk '{print $2}' || echo "0")
+SizeReq=$("$FORMATTER" bytes_to_mb "$SizeReq_bytes")
 
 DNS_dialup=$(grep -E "^  DNS\+dialup:" "$HEY_OUTPUT" | sed -E 's/^  DNS\+dialup:[[:space:]]+//' || echo "N/A")
 DNS_lookup=$(grep -E "^  DNS-lookup:" "$HEY_OUTPUT" | sed -E 's/^  DNS-lookup:[[:space:]]+//' || echo "N/A")
@@ -128,15 +123,28 @@ Req_write=$(grep -E "^  req write:" "$HEY_OUTPUT" | sed -E 's/^  req write:[[:sp
 Resp_wait=$(grep -E "^  resp wait:" "$HEY_OUTPUT" | sed -E 's/^  resp wait:[[:space:]]+//' || echo "N/A")
 Resp_read=$(grep -E "^  resp read:" "$HEY_OUTPUT" | sed -E 's/^  resp read:[[:space:]]+//' || echo "N/A")
 
-# Thread stats
-if [[ -s "$THREAD_LOG" ]]; then
-  AVG_THREADS=$(awk '{s+=$1;n++} END{if(n>0) printf "%.2f", s/n; else print "0"}' "$THREAD_LOG")
-  MAX_THREADS=$(sort -n "$THREAD_LOG" | tail -1)
-  MIN_THREADS=$(sort -n "$THREAD_LOG" | head -1)
+# Get thread count from /proc/PID/status (threads don't die, just get final count)
+THREADS=$(get_proc_status "$PID" "Threads")
+if [[ -z "$THREADS" ]]; then
+  THREADS="N/A"
+fi
+
+# RAM stats (convert KB to MB)
+if [[ -s "$RAM_LOG" ]]; then
+  AVG_RAM=$(awk '{s+=$1;n++} END{if(n>0) printf "%.2f", s/n/1024; else print "0"}' "$RAM_LOG")
+  MIN_RAM=$(sort -n "$RAM_LOG" | head -1 | awk '{printf "%.2f", $1/1024}')
+  
+  # Get peak RAM from VmHWM (High Water Mark)
+  hwm=$(get_proc_status "$PID" "VmHWM")
+  if [[ -n "$hwm" ]]; then
+    MAX_RAM=$(echo "$hwm" | awk '{printf "%.2f", $1/1024}')
+  else
+    MAX_RAM="N/A"
+  fi
 else
-  AVG_THREADS="N/A"
-  MAX_THREADS="N/A"
-  MIN_THREADS="N/A"
+  AVG_RAM="N/A"
+  MAX_RAM="N/A"
+  MIN_RAM="N/A"
 fi
 
 # Cleanup server and monitor
@@ -146,7 +154,7 @@ kill "$MONITOR_PID" 2>/dev/null || true
 wait "$SERVER_PROC" 2>/dev/null || true
 wait "$MONITOR_PID" 2>/dev/null || true
 
-rm -f "$SERVER_LOG" "$HEY_OUTPUT" "$THREAD_LOG"
+rm -f "$SERVER_LOG" "$HEY_OUTPUT" "$RAM_LOG"
 
 # Print summary
 "$FORMATTER" summary \
@@ -167,6 +175,7 @@ rm -f "$SERVER_LOG" "$HEY_OUTPUT" "$THREAD_LOG"
   "$Req_write" \
   "$Resp_wait" \
   "$Resp_read" \
-  "$AVG_THREADS" \
-  "$MAX_THREADS" \
-  "$MIN_THREADS"
+  "$THREADS" \
+  "$AVG_RAM" \
+  "$MAX_RAM" \
+  "$MIN_RAM"
