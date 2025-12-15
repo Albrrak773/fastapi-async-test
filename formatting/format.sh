@@ -20,11 +20,9 @@ CHART="📊"
 CLOCK="⏱️"
 FIRE="🔥"
 THREAD="🧵"
-CHECK="✓"
-CROSS="✗"
+CHECK="✅"
+CROSS="❌"
 HOURGLASS="⏳"
-
-SPINNER_PID_FILE="${TMPDIR:-/tmp}/.bench_spinner_pid"
 
 status() {
   echo -e "${GEAR} ${BLUE}$1${RESET}"
@@ -32,32 +30,6 @@ status() {
 
 error() {
   echo -e "${CROSS} ${RED}Error:${RESET} $1" >&2
-}
-
-progress_start() {
-  # Start a background spinner that dots every 0.2s
-  # Print a one-time header line
-  echo -ne "${HOURGLASS} ${YELLOW}Benchmarking${RESET}"
-  (
-    while true; do
-      echo -n "."
-      sleep 0.2
-    done
-  ) &
-  echo $! > "$SPINNER_PID_FILE"
-}
-
-progress_end() {
-  # Stop spinner and print check mark on a new line
-  if [[ -f "$SPINNER_PID_FILE" ]]; then
-    pid=$(cat "$SPINNER_PID_FILE" || true)
-    if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-    fi
-    rm -f "$SPINNER_PID_FILE"
-  fi
-  echo -e " ${GREEN}${CHECK}${RESET}"
 }
 
 bytes_to_mb() {
@@ -160,8 +132,6 @@ shift || true
 case "$CMD" in
   status) status "$@";;
   error) error "$@";;
-  progress_start) progress_start ;;
-  progress_end) progress_end ;;
   bytes_to_mb) bytes_to_mb "$@";;
   summary) summary "$@";;
   *) echo "Unknown command: $CMD" >&2; exit 1;;

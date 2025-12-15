@@ -4,7 +4,13 @@
 set -euo pipefail
 
 PARSER="$(pwd)/parse_args.sh"
-FORMATTER="$(pwd)/format.sh"
+FORMATTER="$(pwd)/formatting/format.sh"
+
+# Load bash loading animations
+source "$(pwd)/formatting/bash_loading_animations.sh"
+
+# Stop loading animation if script is interrupted
+trap BLA::stop_loading_animation SIGINT
 
 # get arguments using the parser script
 source "$PARSER" "$@"
@@ -91,8 +97,11 @@ SERVER_PROC=$!
 set -e
 
 # Extract PIDs using pgrep
-"$FORMATTER" status "Waiting for server processes to start..."
+BLA_loading_text='⏱️  \033[34mWaiting for server processes to start\033[0m '
+BLA_loading_color='\033[36m'
+BLA::start_loading_animation "${BLA_braille_whitespace[@]}"
 WORKER_PIDS=$(get_worker_pids "$SERVER_PROC" 10)
+BLA::stop_loading_animation
 
 if [[ -z "$WORKER_PIDS" ]]; then
   "$FORMATTER" error "Failed to detect server processes"
@@ -195,14 +204,16 @@ RAM_LOG=$(mktemp)
 MONITOR_PID=$!
 
 # Run hey with live spinner
-"$FORMATTER" status "Running benchmark: hey -n $HEY_REQUESTS -c $HEY_CONCURRENCY ${HOST}${ENDPOINT}"
-"$FORMATTER" progress_start
+"$FORMATTER" status "Running command: hey -n $HEY_REQUESTS -c $HEY_CONCURRENCY ${HOST}${ENDPOINT}"
+BLA_loading_text='⏳ \033[34mBenchmarking\033[0m '
+BLA_loading_color='\033[33m'
+BLA::start_loading_animation "${BLA_modern_metro[@]}"
 HEY_OUTPUT=$(mktemp)
 set +e
 hey -n "$HEY_REQUESTS" -c "$HEY_CONCURRENCY" "${HOST}${ENDPOINT}" >"$HEY_OUTPUT" 2>&1
 HEY_EXIT=$?
 set -e
-"$FORMATTER" progress_end
+BLA::stop_loading_animation
 
 if [[ $HEY_EXIT -ne 0 ]]; then
   "$FORMATTER" error "hey failed. Output:"
